@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">  
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GPX 文件编辑器</title>
+    <!-- 引入 Leaflet CSS 和 JS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+      crossorigin=""
+    ></script>
+    <style>
+         .no-select {  
+            -moz-user-select: none;  /* For Firefox */  
+            -webkit-user-select: none;  /* For Safari */  
+            -ms-user-select: none;  /* For IE10+ */  
+            user-select: none;  /* Standard syntax */  
+        }  
+        /* 全局样式 */
+        body {
+            display: flex;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        /* 左侧容器 */
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        /* 标题和说明 */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .header p {
+            margin: 0 0 0 16px;
+            font-size: 14px;
+        }
+        /* 按钮容器 */
+        .button-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        /* 地图容器 */
+        #map {
+            width: 100%;
+            flex-grow: 1;
+            margin-bottom: 16px;
+            border: 1px solid #ccc;
+        }
+        /* 信息容器 */
+        .info-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .info-group {
+            display: flex;
+            align-items: flex-start;
+        }
+        .info-item {
+            margin-right: 16px;
+        }
+        .info-item p {
+            margin: 0;
+            font-size: 14px;
+        }
+        .info-item .label {
+            font-weight: bold;
+        }
+        .info-item .description {
+            font-size: 12px;
+            color: #6b7280;
+        }
+        /* 右侧轨迹点列表 */
+        .right-panel {
+            width: 300px;
+            padding: 16px;
+            overflow-y: auto;
+            box-sizing: border-box;
+            border-left: 1px solid #e5e7eb;
+        }
+        .right-panel h2 {
+            margin-top: 0;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        .right-panel p {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 4px;
+            margin-bottom: 16px;
+        }
+        .right-panel ul {
+            list-style-type: decimal;
+            padding-left: 20px;
+            margin: 0;
+            font-size: 14px;
+        }
+        /* 地图标记样式 */
+        .marker-start {
+            background-color: yellow;
+            border: 2px solid gray;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+        }
+        .marker-end {
+            background-color: white;
+            border: 2px solid black;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+        }
+        .marker-selected-start {
+            background-color: green;
+            border: 2px solid white;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+        }
+        .marker-selected-end {
+            background-color: red;
+            border: 2px solid white;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 左侧：地图和控件 -->
+    <div class="left-panel">
+        <!-- 标题和键盘控制说明 -->
+        <div class="header">
+            <h1>GPX 文件编辑器</h1>
+            <p>控制: 拖动或WASD 移动, 滚轮或-/= 缩放, Backspace 删除点, 点击地图添加点</p>
+        </div>
+        <!-- 文件选择和导出按钮 -->
+        <div class="button-container">
+            <input type="file" id="gpxFileInput" accept=".gpx" />
+            <button id="exportBtn" class="button">导出GPX 文件</button>
+        </div>
+        <!-- 地图 -->
+        <div id="map"></div>
+        <!-- 底部信息 -->
+        <div class="info-container">
+            <div class="info-group">
+                <div class="info-item">
+                    <p class="label">起始序号：<span id="startValue">19</span></p>
+                    <p class="description">[ ] 增减起始序号</p>
+                </div>
+                <div class="info-item">
+                    <p class="label">结束序号：<span id="endValue">38</span></p>
+                    <p class="description">; ' 减增结束序号</p>
+                </div>
+                <div class="info-item">
+                    <p class="label" id="selectedDistance">选定路径长度: 0 千米</p>
+                </div>
+            </div>
+            <p class="label" id="totalDistance">路径总长度: 0 千米</p>
+        </div>
+    </div>
+    <!-- 右侧：轨迹点列表 -->
+    <div class="right-panel">
+        <h2>轨迹点列表</h2>
+        <p>, . 切换轨迹点</p>
+        <ul id="trkptList"></ul>
+    </div>
+    <!-- 脚本部分 -->
+    <script>
+        let map;
+        let tianDiTuLabelLayer;
+        let tianDiTutk='Your-Own-Tian-Di-Tu-Token'; // 请到 http://lbs.tianditu.gov.cn/home.html 申请并更换成自己的token
+        // 默认加载的轨迹点
+        let trkpts = [
+            { lat: 31.840726, lon: 117.259387 },
+            { lat: 31.842093, lon: 117.259371 },
+            { lat: 31.842339, lon: 117.259194 },
+            { lat: 31.842352, lon: 117.258454 },
+            { lat: 31.841856, lon: 117.258416 },
+            { lat: 31.841856, lon: 117.257772 },
+            { lat: 31.841209, lon: 117.256662 },
+            { lat: 31.840990, lon: 117.256619 },
+            { lat: 31.840753, lon: 117.256625 },
+            { lat: 31.840776, lon: 117.254516 },
+            { lat: 31.840808, lon: 117.253058 },
+            { lat: 31.840047, lon: 117.253031 },
+            { lat: 31.839359, lon: 117.253042 },
+            { lat: 31.839040, lon: 117.252795 },
+            { lat: 31.838757, lon: 117.252445 },
+            { lat: 31.838761, lon: 117.250246 },
+            { lat: 31.838757, lon: 117.249602 },
+            { lat: 31.838998, lon: 117.249237 },
+            { lat: 31.839035, lon: 117.247563 },
+            { lat: 31.840237, lon: 117.247536 },
+            { lat: 31.840502, lon: 117.247638 },
+            { lat: 31.840703, lon: 117.247906 },
+            { lat: 31.841268, lon: 117.248690 },
+            { lat: 31.841792, lon: 117.249306 },
+            { lat: 31.842261, lon: 117.249897 },
+            { lat: 31.842266, lon: 117.250508 },
+            { lat: 31.842270, lon: 117.251216 },
+            { lat: 31.842311, lon: 117.251409 },
+            { lat: 31.842954, lon: 117.251431 },
+            { lat: 31.843405, lon: 117.251313 },
+            { lat: 31.843446, lon: 117.254429 },
+            { lat: 31.843505, lon: 117.257015 },
+            { lat: 31.843528, lon: 117.258442 },
+            { lat: 31.843642, lon: 117.263152 },
+            { lat: 31.843679, lon: 117.264617 },
+            { lat: 31.843055, lon: 117.264617 },
+            { lat: 31.842786, lon: 117.263528 },
+            { lat: 31.841405, lon: 117.263619 },
+            { lat: 31.841487, lon: 117.265437 },
+            { lat: 31.840817, lon: 117.265491 },
+            { lat: 31.840726, lon: 117.265641 },
+            { lat: 31.839573, lon: 117.265743 },
+            { lat: 31.838096, lon: 117.265841 },
+            { lat: 31.836948, lon: 117.265798 },
+            { lat: 31.836911, lon: 117.265444 },
+            { lat: 31.836801, lon: 117.264998 },
+            { lat: 31.836752, lon: 117.264065 },
+            { lat: 31.836351, lon: 117.264081 },
+            { lat: 31.836387, lon: 117.265063 },
+            { lat: 31.834647, lon: 117.265240 }
+        ];
+        let selectedIndex = null;
+        let isFirstLoad = true;
+        let routeStartMarker, routeEndMarker;
+        let selectedStartMarker, selectedEndMarker;
+
+        let startIndex = 19;
+        let endIndex = 38;
+
+        document.getElementById('gpxFileInput').addEventListener('change', handleFileUpload);
+        document.getElementById('exportBtn').addEventListener('click', exportGPX);
+        document.addEventListener('keydown', handleKeyDown);
+
+        // 初始化地图和显示默认轨迹点
+        window.onload = function() {
+            initMap();
+            displayTrkpts();
+            updateIndices();
+            calculateTotalDistance();
+            calculateSelectedDistance();
+            if (trkpts.length > 0) {
+                selectTrkptItem(31);
+            }
+        };
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(e.target.result, "application/xml");
+                    parseGPX(xmlDoc);
+                    drawRoute();
+                    displayTrkpts();
+                    updateIndices();
+                    calculateTotalDistance();
+                    calculateSelectedDistance();
+                    if (trkpts.length > 0) {
+                        selectTrkptItem(31);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function parseGPX(xmlDoc) {
+            trkpts = [];
+            const trkptElements = xmlDoc.getElementsByTagName('trkpt');
+            for (let i = 0; i < trkptElements.length; i++) {
+                const lat = parseFloat(trkptElements[i].getAttribute('lat'));
+                const lon = parseFloat(trkptElements[i].getAttribute('lon'));
+                trkpts.push({ lat, lon });
+            }
+            startIndex = 19;
+            endIndex = 38;
+        }
+        
+        function initMap() {  
+            if (!map) {
+                const tianDiTuVectorLayer = L.tileLayer('http://t{s}.tianditu.gov.cn/vec_w/wmts?' +  
+                    'SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&' +  
+                    'TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&' +  
+                    'tk='+tianDiTutk, {   
+                    subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],  
+                    maxZoom: 18,  
+                    minZoom: 1,  
+                    attribution: '地图数据 © 天地图'  
+                });  
+
+                tianDiTuLabelLayer = L.tileLayer('http://t{s}.tianditu.gov.cn/cva_w/wmts?' +  
+                    'SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&' +  
+                    'TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&' +  
+                    'tk='+tianDiTutk, {    
+                    subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],  
+                    maxZoom: 18,  
+                    minZoom: 1,  
+                    attribution: '地图数据 © 天地图'  
+                });  
+
+                const tianDiTuSatelliteLayer = L.tileLayer('http://t{s}.tianditu.gov.cn/img_w/wmts?' +  
+                    'SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&' +  
+                    'TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&' +  
+                    'tk='+tianDiTutk, {  
+                    subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],  
+                    maxZoom: 18,  
+                    minZoom: 1,  
+                    attribution: '地图数据 © 天地图'  
+                });  
+
+                map = L.map('map', {  
+                    center: [31.840726, 117.259387],  
+                    zoom: 15,  
+                    layers: [tianDiTuVectorLayer, tianDiTuLabelLayer] // 默认加载矢量图层和标注图层  
+                });  
+
+                const baseLayers = {
+                    "天地图标准地图": tianDiTuVectorLayer,  
+                    "天地图卫星影像": tianDiTuSatelliteLayer  
+                };  
+
+                const overlayLayers = {  
+                    "天地图标注": tianDiTuLabelLayer  
+                };  
+
+                L.control.layers(baseLayers, overlayLayers).addTo(map);  
+                
+                map.on('click', onMapClick);
+            }
+            drawRoute();
+            updateMarkers();
+            }
+            
+        function drawRoute() {
+            // 移除现有的路线
+            if (window.routeLine) {
+                map.removeLayer(window.routeLine);
+            }
+
+            // 移除起点和终点标记
+            if (routeStartMarker) {
+                map.removeLayer(routeStartMarker);
+            }
+            if (routeEndMarker) {
+                map.removeLayer(routeEndMarker);
+            }
+
+            if (trkpts.length > 0) {
+                const latlngs = trkpts.map(pt => [pt.lat, pt.lon]);
+                window.routeLine = L.polyline(latlngs, { color: 'blue' }).addTo(map);
+                if (isFirstLoad) {
+                    map.fitBounds(latlngs);
+                    isFirstLoad = false;
+                }
+
+                // 添加起点和终点标记
+                const startPt = trkpts[0];
+                const endPt = trkpts[trkpts.length - 1];
+
+                routeStartMarker = L.circleMarker([startPt.lat, startPt.lon], {
+                    radius: 6,
+                    color: 'gray',
+                    fillColor: 'yellow',
+                    fillOpacity: 1
+                }).addTo(map);
+
+                routeEndMarker = L.circleMarker([endPt.lat, endPt.lon], {
+                    radius: 6,
+                    color: 'black',
+                    fillColor: 'white',
+                    fillOpacity: 1
+                }).addTo(map);
+            }
+        }
+
+        function updateMarkers() {
+            // 移除现有的标记
+            if (window.currentMarker) {
+                map.removeLayer(window.currentMarker);
+            }
+            if (selectedIndex !== null && trkpts[selectedIndex]) {
+                const pt = trkpts[selectedIndex];
+                window.currentMarker = L.marker([pt.lat, pt.lon]).addTo(map);
+                //map.panTo([pt.lat, pt.lon]);
+            }
+        }
+
+        function displayTrkpts() {
+            const trkptList = document.getElementById('trkptList');
+            trkptList.innerHTML = '';
+            trkpts.forEach((pt, index) => {
+                const li = document.createElement('li');
+                li.className = "cursor-pointer";
+                li.innerText = `(${pt.lat.toFixed(6)}, ${pt.lon.toFixed(6)})`;
+                li.index = index;
+                li.tabIndex = 0; // 使列表项可聚焦
+                li.addEventListener('click', function() {
+                    selectTrkptItem(this.index);
+                });
+                trkptList.appendChild(li);
+            });
+
+            // 确保高亮显示当前选中的项
+            if (selectedIndex !== null && trkpts[selectedIndex]) {
+                selectTrkptItem(selectedIndex);
+            }
+        }
+
+        function selectTrkptItem(index) {
+            selectedIndex = index;
+            const items = document.querySelectorAll('#trkptList li');
+            items.forEach((item, idx) => {
+                if (idx === index) {
+                    item.classList.add('bg-blue-200');
+                    item.focus(); // 聚焦到选中的项
+                } else {
+                    item.classList.remove('bg-blue-200');
+                }
+            });
+            updateMarkers();
+        }
+
+        function handleKeyDown(e) {
+            if (selectedIndex !== null) {
+                if (e.key === 'Backspace') {
+                    e.preventDefault();
+                    trkpts.splice(selectedIndex, 1); // 删除选中的点
+                    selectedIndex--;
+                    drawRoute();
+                    displayTrkpts();
+                    updateIndices();
+                    calculateTotalDistance();
+                    calculateSelectedDistance();
+                } else if (e.key === ',' || e.key === '<') {
+                    // 选择上一项
+                    e.preventDefault();
+                    if (selectedIndex > 0) {
+                        selectTrkptItem(selectedIndex - 1);
+                        scrollIntoViewIfNeeded();
+                    }
+                } else if (e.key === '.' || e.key === '>') {
+                    // 选择下一项
+                    e.preventDefault();
+                    if (selectedIndex < trkpts.length - 1) {
+                        selectTrkptItem(selectedIndex + 1);
+                        scrollIntoViewIfNeeded();
+                    }
+                }
+            }
+
+            // 控制起始和结束序号
+            if (e.key === '[') {
+                // 增加起始序号
+                if (startIndex < trkpts.length && startIndex < endIndex - 1) {
+                    startIndex++;
+                    updateIndices();
+                    calculateSelectedDistance();
+                    updateSelectedMarkers();
+                }
+            } else if (e.key === ']') {
+                // 减少起始序号
+                if (startIndex > 1) {
+                    startIndex--;
+                    updateIndices();
+                    calculateSelectedDistance();
+                    updateSelectedMarkers();
+                }
+            } else if (e.key === ';') {
+                // 减少结束序号
+                if (endIndex > startIndex + 1) {
+                    endIndex--;
+                    updateIndices();
+                    calculateSelectedDistance();
+                    updateSelectedMarkers();
+                }
+            } else if (e.key === "'") {
+                // 增加结束序号
+                if (endIndex < trkpts.length) {
+                    endIndex++;
+                    updateIndices();
+                    calculateSelectedDistance();
+                    updateSelectedMarkers();
+                }
+            }
+
+            // 地图控制键
+            const panOffset = 100; // 地图移动的像素值
+            switch (e.key) {
+                case 'w':
+                case 'W':
+                    map.panBy([0, -panOffset]);
+                    break;
+                case 'a':
+                case 'A':
+                    map.panBy([-panOffset, 0]);
+                    break;
+                case 's':
+                case 'S':
+                    map.panBy([0, panOffset]);
+                    break;
+                case 'd':
+                case 'D':
+                    map.panBy([panOffset, 0]);
+                    break;
+                case '+':
+                case '=':
+                    map.zoomIn();
+                    break;
+                case '-':
+                    map.zoomOut();
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        function scrollIntoViewIfNeeded() {
+            const item = document.querySelectorAll('#trkptList li')[selectedIndex];
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+
+        function onMapClick(e) {
+            if (selectedIndex !== null) {
+                // 插入新点到选中的项之后
+                const newPoint = { lat: e.latlng.lat, lon: e.latlng.lng };
+                trkpts.splice(selectedIndex + 1, 0, newPoint);
+                selectedIndex = selectedIndex + 1; // 自动选择新插入的点
+                drawRoute();
+                displayTrkpts();
+                updateIndices();
+                calculateTotalDistance();
+                calculateSelectedDistance();
+            } else {
+                // 如果没有选中任何点，可以添加新点到末尾
+                const newPoint = { lat: e.latlng.lat, lon: e.latlng.lng };
+                trkpts.push(newPoint);
+                selectedIndex = trkpts.length - 1;
+                drawRoute();
+                displayTrkpts();
+                updateIndices();
+                calculateTotalDistance();
+                calculateSelectedDistance();
+            }
+        }
+
+        function calculateTotalDistance() {
+            let totalDistance = 0;
+            for (let i = 1; i < trkpts.length; i++) {
+                const pt1 = L.latLng(trkpts[i - 1].lat, trkpts[i - 1].lon);
+                const pt2 = L.latLng(trkpts[i].lat, trkpts[i].lon);
+                totalDistance += pt1.distanceTo(pt2);
+            }
+            const totalDistanceKm = totalDistance / 1000;
+            document.getElementById('totalDistance').innerText = `路径总长度: ${totalDistanceKm.toFixed(2)} 千米`;
+        }
+
+        function updateIndices() {
+            const startValue = document.getElementById('startValue');
+            const endValue = document.getElementById('endValue');
+
+            const maxIndex = trkpts.length;
+
+            // 确保起始和结束序号在有效范围内
+            if (startIndex > maxIndex) {
+                startIndex = maxIndex;
+            }
+            if (endIndex > maxIndex) {
+                endIndex = maxIndex;
+            }
+            if (startIndex < 1) {
+                startIndex = 1;
+            }
+            if (endIndex < 1) {
+                endIndex = 1;
+            }
+
+            // 确保 startIndex 总是小于 endIndex
+            if (startIndex >= endIndex) {
+                startIndex = endIndex - 1;
+                if (startIndex < 1) {
+                    startIndex = 1;
+                    endIndex = 2;
+                }
+            }
+
+            startValue.innerText = startIndex;
+            endValue.innerText = endIndex;
+
+            calculateSelectedDistance();
+            updateSelectedMarkers();
+        }
+
+        function calculateSelectedDistance() {
+            let sIndex = startIndex - 1;
+            let eIndex = endIndex - 1;
+
+            if (isNaN(sIndex) || isNaN(eIndex)) {
+                document.getElementById('selectedDistance').innerText = '选定路径长度: 0 千米';
+                return;
+            }
+
+            if (sIndex < 0 || eIndex < 0 || sIndex >= trkpts.length || eIndex >= trkpts.length) {
+                document.getElementById('selectedDistance').innerText = '选定路径长度: 0 千米';
+                return;
+            }
+
+            let selectedDistance = 0;
+            for (let i = sIndex + 1; i <= eIndex; i++) {
+                const pt1 = L.latLng(trkpts[i - 1].lat, trkpts[i - 1].lon);
+                const pt2 = L.latLng(trkpts[i].lat, trkpts[i].lon);
+                selectedDistance += pt1.distanceTo(pt2);
+            }
+            const selectedDistanceKm = selectedDistance / 1000;
+            document.getElementById('selectedDistance').innerText = `选定路径长度: ${selectedDistanceKm.toFixed(2)} 千米`;
+        }
+
+        function updateSelectedMarkers() {
+            let sIndex = startIndex - 1;
+            let eIndex = endIndex - 1;
+
+            if (isNaN(sIndex) || isNaN(eIndex)) {
+                return;
+            }
+
+            if (sIndex < 0 || eIndex < 0 || sIndex >= trkpts.length || eIndex >= trkpts.length) {
+                return;
+            }
+
+            // 移除之前的标记
+            if (selectedStartMarker) {
+                map.removeLayer(selectedStartMarker);
+            }
+            if (selectedEndMarker) {
+                map.removeLayer(selectedEndMarker);
+            }
+
+            const startPt = trkpts[sIndex];
+            const endPt = trkpts[eIndex];
+
+            selectedStartMarker = L.circleMarker([startPt.lat, startPt.lon], {
+                radius: 6,
+                color: 'green',
+                fillColor: 'green',
+                fillOpacity: 1
+            }).addTo(map);
+
+            selectedEndMarker = L.circleMarker([endPt.lat, endPt.lon], {
+                radius: 6,
+                color: 'red',
+                fillColor: 'red',
+                fillOpacity: 1
+            }).addTo(map);
+        }
+
+        document.getElementById('exportBtn').addEventListener('click', exportGPX);
+
+        function exportGPX() {
+            const xmlDoc = document.implementation.createDocument('', 'gpx', null);
+            const gpx = xmlDoc.documentElement;
+            gpx.setAttribute('version', '1.1');
+            gpx.setAttribute('creator', 'GPX File Editor');
+
+            const trk = xmlDoc.createElement('trk');
+            const trkseg = xmlDoc.createElement('trkseg');
+            trkpts.forEach(pt => {
+                const trkpt = xmlDoc.createElement('trkpt');
+                trkpt.setAttribute('lat', pt.lat);
+                trkpt.setAttribute('lon', pt.lon);
+                const ele = xmlDoc.createElement('ele');
+                ele.textContent = '0';
+                const speed = xmlDoc.createElement('Speed');
+                trkpt.appendChild(ele);
+                trkpt.appendChild(speed);
+                trkseg.appendChild(trkpt);
+            });
+            trk.appendChild(trkseg);
+            gpx.appendChild(trk);
+
+            const serializer = new XMLSerializer();
+            const gpxString = serializer.serializeToString(xmlDoc);
+
+            const blob = new Blob([gpxString], { type: 'application/gpx+xml' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('Export GPX File');
+            link.href = url;
+            link.download = 'route.gpx';
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+  </script>
+    <script>window.parent.postMessage({ action: "ready" }, "*"); 
+ 
+window.console = new Proxy(console, {
+  get(target, prop) {
+    if (['log', 'warn', 'error'].includes(prop)) {
+      return new Proxy(target[prop], {
+        apply(fn, thisArg, args) {
+          fn.apply(thisArg, args);
+          window.parent.postMessage({ action: 'console', 
+            type: prop, 
+            args: args.map((arg) => {
+              try {
+                return JSON.stringify(arg).replace(/^["']|["']$/g, '');
+              } catch (e) {
+                return arg;
+              }
+            }) 
+          }, '*');
+        }
+      });
+    }
+    return target[prop];
+  }
+});
+</script></body>
+</html>
